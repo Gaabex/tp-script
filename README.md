@@ -230,4 +230,83 @@ local function createGui()
 	-- ===== Funções internas =====
 	local function refreshUI()
 		tpToggle.Text = teleportEnabled and "Desativar" or "Ativar"
-		tpStatus
+		tpStatus.BackgroundColor3 = teleportEnabled and Color3.fromRGB(0,200,0) or Color3.fromRGB(200,0,0)
+		tpCurrentLabel.Text="Botão atual: "..triggerToString(teleportTrigger)
+		dmgToggle.Text = damageEnabled and "Desativar" or "Ativar"
+	end
+
+	-- handlers
+	tpToggle.MouseButton1Click:Connect(function()
+		teleportEnabled = not teleportEnabled
+		refreshUI()
+	end)
+
+	tpNowBtn.MouseButton1Click:Connect(function()
+		doTeleport()
+	end)
+
+	tpChooseBtn.MouseButton1Click:Connect(function()
+		if listeningForTrigger then return end
+		listeningForTrigger=true
+		tpChooseBtn.Text="Pressione tecla/botão..."
+		local conn
+		conn = UserInputService.InputBegan:Connect(function(input, gp)
+			if gp then return end
+			if input.UserInputType==Enum.UserInputType.Keyboard then
+				if input.KeyCode==PANEL_TOGGLE_KEY then return end
+				teleportTrigger={type="Key", key=input.KeyCode}
+			else
+				local bt=input.UserInputType
+				if bt==Enum.UserInputType.MouseButton1
+					or bt==Enum.UserInputType.MouseButton2
+					or bt==Enum.UserInputType.MouseButton3
+					or bt==Enum.UserInputType.MouseButton4
+					or bt==Enum.UserInputType.MouseButton5 then
+					teleportTrigger={type="Mouse", button=bt}
+				end
+			end
+			listeningForTrigger=false
+			conn:Disconnect()
+			tpChooseBtn.Text="Escolher botão"
+			refreshUI()
+		end)
+	end)
+
+	dmgToggle.MouseButton1Click:Connect(function()
+		damageEnabled = not damageEnabled
+		refreshUI()
+	end)
+
+	dmgBox.FocusLost:Connect(function(enterPressed)
+		local val = tonumber(dmgBox.Text)
+		if val and val>0 then
+			damageMultiplier=val
+		else
+			dmgBox.Text=tostring(damageMultiplier)
+		end
+	end)
+
+	-- inicia oculto
+	screenGui.Enabled=false
+
+	return screenGui, refreshUI
+end
+
+local screenGui, refreshUI=createGui()
+
+-- ============================
+-- INPUT GLOBAL
+-- ============================
+UserInputService.InputBegan:Connect(function(input,gp)
+	-- abrir/fechar painel
+	if input.UserInputType==Enum.UserInputType.Keyboard and input.KeyCode==PANEL_TOGGLE_KEY and not listeningForTrigger then
+		screenGui.Enabled=not screenGui.Enabled
+	end
+
+	-- Teleporte pelo trigger
+	if teleportEnabled and not listeningForTrigger and isTriggerInput(input) and not gp then
+		doTeleport()
+	end
+end)
+
+print("Painel Teleporte + Dano carregado. Pressione "..PANEL_TOGGLE_KEY.Name.." para abrir o painel.")
