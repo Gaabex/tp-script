@@ -8,8 +8,8 @@ local mouse = player:GetMouse()
 
 -- CONFIGURAÇÕES
 local TELEPORT_KEY = Enum.KeyCode.F -- atalho da habilidade
-local MAX_DISTANCE = 100            -- distância máxima do teleporte
-local COOLDOWN = 3                  -- segundos de recarga
+local MAX_DISTANCE = 10000            -- distância máxima do teleporte
+local COOLDOWN = 0                  -- segundos de recarga
 
 -- estado
 local debounce = false
