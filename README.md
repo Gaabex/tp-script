@@ -1,30 +1,38 @@
--- LocalScript: StarterPlayerScripts/TeleportPanel.lua
--- Painel (G) + toggle + escolher botão/tecla + teleport sem limite de distância
--- Instale: cole como LocalScript em StarterPlayerScripts
+-- LocalScript: StarterPlayerScripts/TeleportAndDamagePanel.lua
+-- Painel Teleporte + Multiplicador de Dano (2x padrão)
+-- Instale: LocalScript em StarterPlayerScripts
 
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
-
 local player = Players.LocalPlayer
 local mouse = player:GetMouse()
 
--- TECLA QUE ABRE O PAINEL
-local TOGGLE_KEY = Enum.KeyCode.G
+-- ============================
+-- CONFIGURAÇÃO
+-- ============================
+local PANEL_TOGGLE_KEY = Enum.KeyCode.G -- tecla para abrir/fechar painel
+local TELEPORT_KEY_DEFAULT = Enum.UserInputType.MouseButton1 -- trigger default do teleporte
+local TELEPORT_RISE = 3 -- sobe o destino pra não prender no chão
+local DAMAGE_DEFAULT = 2 -- multiplicador de dano padrão
 
--- Estado
-local teleportEnabled = false
+-- ============================
+-- ESTADOS
+-- ============================
+local teleportEnabled = true
+local teleportTrigger = {type="Mouse", button=TELEPORT_KEY_DEFAULT}
 local listeningForTrigger = false
 
--- Trigger padrão: clique esquerdo do mouse (você pode mudar via GUI)
-local trigger = { type = "Mouse", button = Enum.UserInputType.MouseButton1 }
+local damageEnabled = true
+local damageMultiplier = DAMAGE_DEFAULT
 
--- UTIL: pega HumanoidRootPart ou Torso
+-- ============================
+-- FUNÇÕES AUXILIARES
+-- ============================
 local function getRoot(char)
 	return char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso"))
 end
 
--- Efeito visual simples no destino
 local function spawnEffectAt(position)
 	local part = Instance.new("Part")
 	part.Size = Vector3.new(0.6, 0.6, 0.6)
@@ -35,52 +43,33 @@ local function spawnEffectAt(position)
 	part.Material = Enum.Material.Neon
 	part.CFrame = CFrame.new(position)
 	part.Parent = workspace
-
 	local elapsed = 0
 	local duration = 0.35
 	local initial = part.Size
 	local target = initial * 3
-
 	local conn
 	conn = RunService.Heartbeat:Connect(function(dt)
 		elapsed = elapsed + dt
-		local t = math.min(elapsed / duration, 1)
-		part.Size = initial:Lerp(target, t)
-		if t >= 1 then
-			conn:Disconnect()
-			part:Destroy()
-		end
+		local t = math.min(elapsed/duration,1)
+		part.Size = initial:Lerp(target,t)
+		if t >= 1 then conn:Disconnect() part:Destroy() end
 	end)
 end
 
--- FUNÇÃO DE TELEPORT (sem limite de distância)
+-- ============================
+-- TELEPORT
+-- ============================
 local function doTeleport()
 	local char = player.Character
 	if not char then return end
 	local root = getRoot(char)
-	if not root then
-		warn("Teleport: character root não encontrado.")
-		return
-	end
-
-	-- mouse.Hit é um CFrame para onde a mira está apontando
+	if not root then return end
 	local hitCFrame = mouse.Hit
-	if not hitCFrame then
-		warn("Teleport: mouse.Hit indefinido.")
-		return
-	end
-
+	if not hitCFrame then return end
 	local dest = hitCFrame.p
-	-- validação básica: evitar NaN/inf
-	if dest ~= dest then
-		warn("Teleport: posição inválida.")
-		return
-	end
-
-	local finalPos = dest + Vector3.new(0, 3, 0) -- sobe pra evitar prender no chão
+	if dest ~= dest then return end -- evita NaN
+	local finalPos = dest + Vector3.new(0, TELEPORT_RISE, 0)
 	spawnEffectAt(finalPos)
-
-	-- aplica teleporte localmente
 	local ok, err = pcall(function()
 		if char.PrimaryPart then
 			char:SetPrimaryPartCFrame(CFrame.new(finalPos))
@@ -88,244 +77,157 @@ local function doTeleport()
 			root.CFrame = CFrame.new(finalPos)
 		end
 	end)
-	if not ok then
-		warn("Erro ao teleportar:", err)
-	end
+	if not ok then warn("Erro ao teleportar:", err) end
 end
 
--- UTIL: converte trigger para texto legível
+-- ============================
+-- TRIGGER / INPUT
+-- ============================
 local function triggerToString(t)
 	if not t then return "Nenhum" end
-	if t.type == "Key" then
-		return tostring(t.key.Name or tostring(t.key))
-	elseif t.type == "Mouse" then
-		-- mapeia os nomes das enums mais comuns
-		local mt = t.button
-		if mt == Enum.UserInputType.MouseButton1 then return "Mouse: Esquerdo" end
-		if mt == Enum.UserInputType.MouseButton2 then return "Mouse: Direito" end
-		if mt == Enum.UserInputType.MouseButton3 then return "Mouse: Meio" end
-		return "Mouse: "..tostring(mt)
+	if t.type=="Key" then return tostring(t.key.Name or t.key) end
+	if t.type=="Mouse" then
+		local b=t.button
+		if b==Enum.UserInputType.MouseButton1 then return "Mouse Esquerdo" end
+		if b==Enum.UserInputType.MouseButton2 then return "Mouse Direito" end
+		if b==Enum.UserInputType.MouseButton3 then return "Mouse Meio" end
+		return "Mouse: "..tostring(b)
 	end
 	return tostring(t)
 end
 
--- CHECA SE input recebido bate com o trigger selecionado
 local function isTriggerInput(input)
 	if not input then return false end
-	if trigger.type == "Key" then
-		-- teclas: UserInputType deve ser Keyboard e KeyCode igual
-		return input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == trigger.key
-	elseif trigger.type == "Mouse" then
-		return input.UserInputType == trigger.button
+	if teleportTrigger.type=="Key" then
+		return input.UserInputType==Enum.UserInputType.Keyboard and input.KeyCode==teleportTrigger.key
+	elseif teleportTrigger.type=="Mouse" then
+		return input.UserInputType==teleportTrigger.button
 	end
 	return false
 end
 
--- CRIA GUI
+-- ============================
+-- GUI
+-- ============================
 local function createGui()
-	-- evita duplicar
-	if player:FindFirstChild("PlayerGui") and player.PlayerGui:FindFirstChild("TeleportPanelGui") then
-		player.PlayerGui.TeleportPanelGui:Destroy()
+	local playerGui = player:WaitForChild("PlayerGui")
+	if playerGui:FindFirstChild("TeleportDamageGui") then
+		playerGui.TeleportDamageGui:Destroy()
 	end
 
 	local screenGui = Instance.new("ScreenGui")
-	screenGui.Name = "TeleportPanelGui"
+	screenGui.Name = "TeleportDamageGui"
 	screenGui.ResetOnSpawn = false
-	screenGui.Parent = player:WaitForChild("PlayerGui")
+	screenGui.Parent = playerGui
 
 	local frame = Instance.new("Frame")
-	frame.Size = UDim2.new(0, 220, 0, 120)
+	frame.Size = UDim2.new(0, 250, 0, 180)
 	frame.Position = UDim2.new(0, 12, 0, 12)
-	frame.AnchorPoint = Vector2.new(0, 0)
-	frame.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
+	frame.BackgroundColor3 = Color3.fromRGB(20,20,20)
 	frame.BorderSizePixel = 0
 	frame.BackgroundTransparency = 0.05
-	frame.Parent = screenGui
 	frame.Active = true
 	frame.Draggable = true
+	frame.Parent = screenGui
 
+	-- Título
 	local title = Instance.new("TextLabel")
-	title.Size = UDim2.new(0, 120, 0, 28)
-	title.Position = UDim2.new(0, 8, 0, 6)
+	title.Size = UDim2.new(0,200,0,28)
+	title.Position = UDim2.new(0,8,0,6)
 	title.BackgroundTransparency = 1
-	title.Text = "Teleporte"
-	title.TextColor3 = Color3.new(1,1,1)
-	title.Font = Enum.Font.SourceSansBold
-	title.TextSize = 18
+	title.Text="Painel de Habilidades"
+	title.Font=Enum.Font.SourceSansBold
+	title.TextColor3=Color3.fromRGB(255,255,255)
+	title.TextSize=18
 	title.TextXAlignment = Enum.TextXAlignment.Left
 	title.Parent = frame
 
-	-- status circle
-	local status = Instance.new("TextLabel")
-	status.Size = UDim2.new(0, 18, 0, 18)
-	status.Position = UDim2.new(0, 140, 0, 8)
-	status.BackgroundTransparency = 0
-	status.BorderSizePixel = 0
-	status.Text = ""
-	status.Parent = frame
+	-- ===== Teleporte =====
+	local tpLabel = Instance.new("TextLabel")
+	tpLabel.Size = UDim2.new(0,100,0,20)
+	tpLabel.Position=UDim2.new(0,8,0,40)
+	tpLabel.BackgroundTransparency=1
+	tpLabel.Text="Teleporte:"
+	tpLabel.TextColor3=Color3.fromRGB(255,255,255)
+	tpLabel.Font=Enum.Font.SourceSans
+	tpLabel.TextSize=16
+	tpLabel.TextXAlignment=Enum.TextXAlignment.Left
+	tpLabel.Parent=frame
 
-	local function updateStatusUI()
-		if teleportEnabled then
-			status.BackgroundColor3 = Color3.fromRGB(0, 200, 0)
-		else
-			status.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
-		end
-	end
-	updateStatusUI()
+	local tpStatus = Instance.new("TextLabel")
+	tpStatus.Size=UDim2.new(0,20,0,20)
+	tpStatus.Position=UDim2.new(0,100,0,40)
+	tpStatus.BackgroundTransparency=0
+	tpStatus.Text=""
+	tpStatus.Parent=frame
 
-	-- Toggle button (Ativar/Desativar)
-	local toggleBtn = Instance.new("TextButton")
-	toggleBtn.Size = UDim2.new(0, 70, 0, 28)
-	toggleBtn.Position = UDim2.new(0, 144, 0, 6)
-	toggleBtn.Text = teleportEnabled and "Desativar" or "Ativar"
-	toggleBtn.Font = Enum.Font.SourceSans
-	toggleBtn.TextSize = 14
-	toggleBtn.Parent = frame
+	local tpToggle = Instance.new("TextButton")
+	tpToggle.Size=UDim2.new(0,80,0,20)
+	tpToggle.Position=UDim2.new(0,130,0,40)
+	tpToggle.Text = teleportEnabled and "Desativar" or "Ativar"
+	tpToggle.Font=Enum.Font.SourceSans
+	tpToggle.TextSize=14
+	tpToggle.Parent=frame
 
-	-- Botão "Teleportar agora"
 	local tpNowBtn = Instance.new("TextButton")
-	tpNowBtn.Size = UDim2.new(0, 100, 0, 28)
-	tpNowBtn.Position = UDim2.new(0, 8, 0, 40)
-	tpNowBtn.Text = "Teleportar agora"
-	tpNowBtn.Font = Enum.Font.SourceSans
-	tpNowBtn.TextSize = 14
-	tpNowBtn.Parent = frame
+	tpNowBtn.Size=UDim2.new(0,80,0,20)
+	tpNowBtn.Position=UDim2.new(0,130,0,65)
+	tpNowBtn.Text="Teleportar agora"
+	tpNowBtn.Font=Enum.Font.SourceSans
+	tpNowBtn.TextSize=14
+	tpNowBtn.Parent=frame
 
-	-- Botão escolher trigger
-	local chooseBtn = Instance.new("TextButton")
-	chooseBtn.Size = UDim2.new(0, 100, 0, 28)
-	chooseBtn.Position = UDim2.new(0, 112, 0, 40)
-	chooseBtn.Text = "Escolher botão"
-	chooseBtn.Font = Enum.Font.SourceSans
-	chooseBtn.TextSize = 14
-	chooseBtn.Parent = frame
+	local tpChooseBtn = Instance.new("TextButton")
+	tpChooseBtn.Size=UDim2.new(0,100,0,20)
+	tpChooseBtn.Position=UDim2.new(0,8,0,65)
+	tpChooseBtn.Text="Escolher botão"
+	tpChooseBtn.Font=Enum.Font.SourceSans
+	tpChooseBtn.TextSize=14
+	tpChooseBtn.Parent=frame
 
-	-- Label que mostra o trigger atual
-	local currentLabel = Instance.new("TextLabel")
-	currentLabel.Size = UDim2.new(0, 200, 0, 20)
-	currentLabel.Position = UDim2.new(0, 8, 0, 76)
-	currentLabel.BackgroundTransparency = 1
-	currentLabel.Text = "Botão atual: " .. triggerToString(trigger)
-	currentLabel.TextColor3 = Color3.new(1,1,1)
-	currentLabel.Font = Enum.Font.SourceSans
-	currentLabel.TextSize = 14
-	currentLabel.TextXAlignment = Enum.TextXAlignment.Left
-	currentLabel.Parent = frame
+	local tpCurrentLabel = Instance.new("TextLabel")
+	tpCurrentLabel.Size=UDim2.new(0,230,0,20)
+	tpCurrentLabel.Position=UDim2.new(0,8,0,90)
+	tpCurrentLabel.BackgroundTransparency=1
+	tpCurrentLabel.Text="Botão atual: "..triggerToString(teleportTrigger)
+	tpCurrentLabel.TextColor3=Color3.fromRGB(255,255,255)
+	tpCurrentLabel.Font=Enum.Font.SourceSans
+	tpCurrentLabel.TextSize=14
+	tpCurrentLabel.TextXAlignment=Enum.TextXAlignment.Left
+	tpCurrentLabel.Parent=frame
 
-	-- função para atualizar textos
+	-- ===== Multiplicador de Dano =====
+	local dmgLabel = Instance.new("TextLabel")
+	dmgLabel.Size=UDim2.new(0,120,0,20)
+	dmgLabel.Position=UDim2.new(0,8,0,120)
+	dmgLabel.BackgroundTransparency=1
+	dmgLabel.Text="Multiplicador de dano:"
+	dmgLabel.TextColor3=Color3.fromRGB(255,255,255)
+	dmgLabel.Font=Enum.Font.SourceSans
+	dmgLabel.TextSize=16
+	dmgLabel.TextXAlignment=Enum.TextXAlignment.Left
+	dmgLabel.Parent=frame
+
+	local dmgBox = Instance.new("TextBox")
+	dmgBox.Size=UDim2.new(0,50,0,20)
+	dmgBox.Position=UDim2.new(0,140,0,120)
+	dmgBox.Text=tostring(damageMultiplier)
+	dmgBox.ClearTextOnFocus=false
+	dmgBox.Font=Enum.Font.SourceSans
+	dmgBox.TextSize=14
+	dmgBox.TextColor3=Color3.fromRGB(0,0,0)
+	dmgBox.BackgroundColor3=Color3.fromRGB(200,200,200)
+	dmgBox.Parent=frame
+
+	local dmgToggle = Instance.new("TextButton")
+	dmgToggle.Size=UDim2.new(0,80,0,20)
+	dmgToggle.Position=UDim2.new(0,190,0,120)
+	dmgToggle.Text=damageEnabled and "Desativar" or "Ativar"
+	dmgToggle.Font=Enum.Font.SourceSans
+	dmgToggle.TextSize=14
+	dmgToggle.Parent=frame
+
+	-- ===== Funções internas =====
 	local function refreshUI()
-		toggleBtn.Text = teleportEnabled and "Desativar" or "Ativar"
-		currentLabel.Text = "Botão atual: " .. triggerToString(trigger)
-		updateStatusUI()
-	end
-
-	-- toggle handler
-	toggleBtn.MouseButton1Click:Connect(function()
-		teleportEnabled = not teleportEnabled
-		refreshUI()
-	end)
-
-	-- teleport now
-	tpNowBtn.MouseButton1Click:Connect(function()
-		doTeleport()
-	end)
-
-	-- escolher trigger: ao clicar, aguarda próximo input do jogador
-	local captureConn
-	chooseBtn.MouseButton1Click:Connect(function()
-		if listeningForTrigger then
-			-- se já estiver ouvindo, cancela
-			listeningForTrigger = false
-			if captureConn then captureConn:Disconnect() end
-			chooseBtn.Text = "Escolher botão"
-			refreshUI()
-			return
-		end
-
-		listeningForTrigger = true
-		chooseBtn.Text = "Pressione agora..."
-		currentLabel.Text = "Aguardando input (pressione tecla/botão)..."
-
-		-- temporária: captura o próximo InputBegan (aceita teclado ou mouse)
-		captureConn = UserInputService.InputBegan:Connect(function(input, gameProcessed)
-			-- ignorar Inputs do tipo Enum.UserInputType.Focus ou outros irrelevantes
-			-- Aceitamos independentemente de gameProcessed enquanto estiver escolhendo
-			-- Bloqueamos apenas se for a tecla de toggle (evitar conflito com G)
-			if input.UserInputType == Enum.UserInputType.Keyboard then
-				local kc = input.KeyCode
-				if kc == TOGGLE_KEY then
-					-- não permita usar a mesma tecla de toggle para evitar conflito
-					currentLabel.Text = "Não pode usar a tecla de toggle ("..tostring(TOGGLE_KEY.Name).."). Escolha outra."
-					wait(1.2)
-					-- volta ao estado de escolha
-					chooseBtn.Text = "Escolher botão"
-					listeningForTrigger = false
-					captureConn:Disconnect()
-					captureConn = nil
-					refreshUI()
-					return
-				end
-
-				-- define trigger para tecla
-				trigger = { type = "Key", key = kc }
-				listeningForTrigger = false
-				chooseBtn.Text = "Escolher botão"
-				captureConn:Disconnect()
-				captureConn = nil
-				refreshUI()
-			else
-				-- Mouse buttons (ex: MouseButton1, MouseButton2, MouseButton3)
-				local uit = input.UserInputType
-				-- Aceita apenas mouse buttons
-				if uit == Enum.UserInputType.MouseButton1
-					or uit == Enum.UserInputType.MouseButton2
-					or uit == Enum.UserInputType.MouseButton3
-					or uit == Enum.UserInputType.MouseButton4
-					or uit == Enum.UserInputType.MouseButton5 then
-
-					trigger = { type = "Mouse", button = uit }
-					listeningForTrigger = false
-					chooseBtn.Text = "Escolher botão"
-					captureConn:Disconnect()
-					captureConn = nil
-					refreshUI()
-				else
-					-- se não for um mouse button, ignore e continue esperando
-					-- (por exemplo, tocar na tela ou outros eventos não desejados)
-				end
-			end
-		end)
-	end)
-
-	-- inicializa oculto (painel fechado por padrão)
-	screenGui.Enabled = false
-
-	-- retorna referências úteis
-	return screenGui, refreshUI
-end
-
-local screenGui, refreshUI = createGui()
-
--- MANAGER: Input global
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-	-- Toggle do painel (G)
-	if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == TOGGLE_KEY and not listeningForTrigger then
-		-- alterna visibilidade do painel
-		screenGui.Enabled = not screenGui.Enabled
-		return
-	end
-
-	-- se UI está capturando trigger, ignore este listener (captura temporária faz o trabalho)
-	if listeningForTrigger then return end
-
-	-- evita interagir quando o input foi processado pela GUI (evita teleport ao clicar em botões)
-	if gameProcessed then return end
-
-	-- só teleporta se habilidade ativada
-	if teleportEnabled and isTriggerInput(input) then
-		doTeleport()
-	end
-end)
-
--- print de debug
-print("TeleportPanel carregado. Pressione '"..TOGGLE_KEY.Name.."' para abrir o painel.")
+		tpToggle.Text = teleportEnabled and "Desativar" or "Ativar"
+		tpStatus
